@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,14 +9,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Simulation { 
-   id        String   @id @default(cuid())
+// Simulacao
+model Simulation {
+  id        String   @id @default(cuid())
   name      String
   startDate DateTime
   realRate  Float
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("Simulation")
 
+  financialAllocations FinancialAllocation[]
+  realEstateAllocations RealEstateAllocation[]
+  movements             Movement[]
+  insurances            Insurance[]
+
+  @@map("simulations")
+}
+
+
+// Alocação Financeira 
+model FinancialAllocation {
+  id           String   @id @default(cuid())
+  name         String
+  value        Float
+  date         DateTime
+  simulationId String
+
+  simulation Simulation @relation(fields: [simulationId], references: [id])
+
+  @@map("financial_allocations")
+}
+
+// Alocação Imobiliária
+model RealEstateAllocation {
+  id           String   @id @default(cuid())
+  name         String
+  value        Float
+  date         DateTime
+  simulationId String
+
+  simulation Simulation @relation(fields: [simulationId], references: [id])
+
+  @@map("real_estate_allocations")
+}
+
+// Movimentações
+model Movement {
+  id           String   @id @default(cuid())
+  type         String
+  description  String
+  value        Float
+  frequency    String 
+  startDate    DateTime
+  endDate      DateTime? 
+  simulationId String
+
+  simulation Simulation @relation(fields: [simulationId], references: [id])
+
+  @@map("movements")
+}
+
+// Seguros
+model Insurance {
+  id           String   @id @default(cuid())
+  name         String
+  type         String 
+  startDate    DateTime
+  duration     Int 
+  monthlyFee   Float
+  insuredValue Float
+  simulationId String
+
+
+  simulation Simulation @relation(fields: [simulationId], references: [id])
+
+  @@map("insurances")
 }
