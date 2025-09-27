@@ -15,6 +15,7 @@ model Simulation {
   name      String
   startDate DateTime
   realRate  Float
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
