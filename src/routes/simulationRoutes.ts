@@ -3,16 +3,27 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { calculatePatrimonialProjection } from '../services/simulationService.js';
 
+// Função auxiliar para tratamento de erros, evitando repetição
+function handleError(error: any, reply: FastifyReply, context: string) {
+  if (error instanceof z.ZodError) {
+    return reply.status(400).send({ message: `Dados inválidos para ${context}.`, details: error.format() });
+  }
+  // Código de erro do Prisma para "registro não encontrado" em operações de deleção/atualização
+  if (error.code === 'P2025') {
+      return reply.status(404).send({ message: `${context} não encontrado(a).` });
+  }
+  console.error(`Erro em ${context}:`, error);
+  return reply.status(500).send({ message: `Erro interno do servidor ao processar ${context}.` });
+}
+
 export async function simulationRoutes(app: FastifyInstance) {
   
+  // POST /simulations - Criar uma nova simulação
   app.post('/simulations', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const createSimulationBody = z.object({
         name: z.string().min(1, 'Nome é obrigatório'),
-        startDate: z.string().refine((date) => {
-          const parsed = new Date(date);
-          return !isNaN(parsed.getTime());
-        }, 'Data inválida'),
+        startDate: z.string().refine((date) => !isNaN(new Date(date).getTime()), 'Data inválida'),
         realRate: z.number().min(0, 'Taxa deve ser maior ou igual a 0'),
       });
 
@@ -21,105 +32,59 @@ export async function simulationRoutes(app: FastifyInstance) {
       const simulation = await prisma.simulation.create({
         data: { 
           name, 
-          startDate: new Date(startDate), // Garantir que é Date object
+          startDate: new Date(startDate),
           realRate 
         },
       });
 
       return reply.status(201).send(simulation);
     } catch (error) {
-      console.error('Erro ao criar simulação:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Dados inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro interno do servidor' 
-      });
+      return handleError(error, reply, 'criação de simulação');
     }
   });
 
-  // GET /simulations - Listar simulações
+  // GET /simulations - Listar todas as simulações
   app.get('/simulations', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const simulations = await prisma.simulation.findMany({
         orderBy: { createdAt: 'desc' },
       });
-      
       return reply.status(200).send(simulations);
     } catch (error) {
-      console.error('Erro ao buscar simulações:', error);
-      return reply.status(500).send({ 
-        error: 'Erro ao buscar simulações' 
-      });
+      return handleError(error, reply, 'busca de simulações');
     }
   });
 
-  // DELETE /simulations/:id - Deletar simulação
+  // DELETE /simulations/:id - Deletar uma simulação
   app.delete('/simulations/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const getParams = z.object({ 
-        id: z.string().min(1, 'ID é obrigatório')
-      });
-      
+      const getParams = z.object({ id: z.string().cuid('ID da simulação inválido') });
       const { id } = getParams.parse(request.params);
-      
-      // Verificar se a simulação existe
-      const existingSimulation = await prisma.simulation.findUnique({ 
-        where: { id } 
-      });
-      
-      if (!existingSimulation) {
-        return reply.status(404).send({ 
-          error: 'Simulação não encontrada' 
-        });
-      }
       
       await prisma.simulation.delete({ where: { id } });
       
       return reply.status(204).send();
     } catch (error) {
-      console.error('Erro ao deletar simulação:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Parâmetros inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro ao deletar simulação' 
-      });
+      return handleError(error, reply, 'deleção de simulação');
     }
   });
 
-  // GET /simulations/:id/projection - Buscar projeção
+  // GET /simulations/:id/projection - Buscar projeção patrimonial
   app.get('/simulations/:id/projection', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const getParams = z.object({ 
-        id: z.string().min(1, 'ID é obrigatório')
-      });
-      
+      const getParams = z.object({ id: z.string().cuid('ID da simulação inválido') });
       const { id } = getParams.parse(request.params);
       
-      const simulation = await prisma.simulation.findUnique({ 
-        where: { id } 
-      });
+      const simulation = await prisma.simulation.findUnique({ where: { id } });
       
       if (!simulation) {
-        return reply.status(404).send({ 
-          error: 'Simulação não encontrada' 
-        });
+        return reply.status(404).send({ message: 'Simulação não encontrada' });
       }
 
+      // Lógica de cálculo da projeção (exemplo)
       const projection = calculatePatrimonialProjection({
-        initialValue: 10000,
-        monthlyContribution: 500,
+        initialValue: 10000, // Este valor deveria vir das alocações
+        monthlyContribution: 500, // Este valor deveria vir dos movimentos
         yearlyRate: simulation.realRate,
         startYear: new Date(simulation.startDate).getFullYear(),
         endYear: 2060,
@@ -127,134 +92,105 @@ export async function simulationRoutes(app: FastifyInstance) {
 
       return reply.status(200).send(projection);
     } catch (error) {
-      console.error('Erro ao calcular projeção:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Parâmetros inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro ao calcular projeção' 
-      });
+      return handleError(error, reply, 'cálculo de projeção');
     }
   });
 
-  // POST /simulations/:simulationId/allocations/financial - Criar alocação financeira
+  // ===================================================================
+  // ROTAS CORRIGIDAS
+  // ===================================================================
+
+  // POST /simulations/:simulationId/allocations/financial - Criar uma nova categoria de alocação financeira com seu valor inicial
   app.post('/simulations/:simulationId/allocations/financial', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const getParams = z.object({ 
-        simulationId: z.string().min(1, 'ID da simulação é obrigatório')
+        simulationId: z.string().cuid('ID da simulação inválido')
       });
       
       const createBody = z.object({
-        name: z.string().min(1, 'Nome é obrigatório'),
-        value: z.number().positive('Valor deve ser positivo'),
-        date: z.string().refine((date) => {
-          const parsed = new Date(date);
-          return !isNaN(parsed.getTime());
-        }, 'Data inválida'),
+        name: z.string().min(1, 'Nome da alocação é obrigatório'),
+        value: z.number().positive('O valor inicial deve ser positivo'),
+        date: z.string().refine((d) => !isNaN(new Date(d).getTime()), 'Data inválida'),
       });
 
       const { simulationId } = getParams.parse(request.params);
       const { name, value, date } = createBody.parse(request.body);
 
-      // Verificar se a simulação existe
-      const simulation = await prisma.simulation.findUnique({
-        where: { id: simulationId }
+      const simulationExists = await prisma.simulation.findUnique({
+        where: { id: simulationId },
       });
 
-      if (!simulation) {
-        return reply.status(404).send({ 
-          error: 'Simulação não encontrada' 
-        });
+      if (!simulationExists) {
+        return reply.status(404).send({ message: 'Simulação não encontrada.' });
       }
 
-      const allocation = await prisma.financialAllocation.create({
-        data: { 
-          name, 
-          value, 
-          date: new Date(date), 
-          simulationId 
+      const newAllocation = await prisma.financialAllocation.create({
+        data: {
+          name,
+          simulationId,
+          history: {
+            create: {
+              value,
+              date: new Date(date),
+            },
+          },
+        },
+        include: {
+          history: true, // Retorna o histórico recém-criado na resposta
         },
       });
 
-      return reply.status(201).send(allocation);
+      return reply.status(201).send(newAllocation);
     } catch (error) {
-      console.error('Erro ao criar alocação financeira:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Dados inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro ao criar alocação financeira' 
-      });
+      return handleError(error, reply, 'criação de alocação financeira');
     }
   });
 
-  // GET /simulations/:simulationId/allocations/financial - Listar alocações financeiras
+  // GET /simulations/:simulationId/allocations/financial - Listar alocações financeiras de uma simulação
   app.get('/simulations/:simulationId/allocations/financial', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const getParams = z.object({ 
-        simulationId: z.string().min(1, 'ID da simulação é obrigatório')
+        simulationId: z.string().cuid('ID da simulação inválido')
       });
       
       const { simulationId } = getParams.parse(request.params);
       
-      // Verificar se a simulação existe
-      const simulation = await prisma.simulation.findUnique({
+      const simulationExists = await prisma.simulation.findUnique({
         where: { id: simulationId }
       });
 
-      if (!simulation) {
-        return reply.status(404).send({ 
-          error: 'Simulação não encontrada' 
-        });
+      if (!simulationExists) {
+        return reply.status(404).send({ message: 'Simulação não encontrada' });
       }
 
+      // Busca as alocações e inclui o histórico de cada uma
       const allocations = await prisma.financialAllocation.findMany({
         where: { simulationId },
-        orderBy: { date: 'desc' },
+        include: {
+          history: {
+            orderBy: { date: 'desc' }, // Ordena o histórico de cada alocação
+          },
+        },
+        orderBy: { createdAt: 'asc' }, // Ordena a lista de alocações
       });
 
       return reply.status(200).send(allocations);
     } catch (error) {
-      console.error('Erro ao buscar alocações financeiras:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Parâmetros inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro ao buscar alocações financeiras' 
-      });
+      return handleError(error, reply, 'busca de alocações financeiras');
     }
   });
 
-  // ==================================================================
-  // NOVO ENDPOINT DE COMPARAÇÃO
-  // ==================================================================
+  // POST /simulations/compare - Comparar projeções de múltiplas simulações
   app.post('/simulations/compare', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const compareBody = z.object({
-        simulationIds: z.array(z.string().min(1, "ID inválido no array")),
+        simulationIds: z.array(z.string().cuid("ID inválido no array")).min(1, "Forneça ao menos um ID"),
       });
 
       const { simulationIds } = compareBody.parse(request.body);
 
-      // Usamos um Record para garantir a tipagem do objeto de resposta
       const comparisonData: Record<string, any[]> = {};
 
-      // Usamos Promise.all para rodar as buscas em paralelo, é mais performático
       await Promise.all(simulationIds.map(async (id) => {
         const simulation = await prisma.simulation.findUnique({ where: { id } });
         
@@ -268,26 +204,13 @@ export async function simulationRoutes(app: FastifyInstance) {
           });
           comparisonData[id] = projection;
         } else {
-          // Se um ID não for encontrado, podemos optar por pular ou retornar um erro
           console.warn(`Simulação com ID ${id} não encontrada durante a comparação.`);
         }
       }));
 
       return reply.status(200).send(comparisonData);
-
     } catch (error) {
-      console.error('Erro ao comparar simulações:', error);
-      
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ 
-          error: 'Dados de comparação inválidos', 
-          details: error.errors 
-        });
-      }
-      
-      return reply.status(500).send({ 
-        error: 'Erro interno ao comparar simulações' 
-      });
+      return handleError(error, reply, 'comparação de simulações');
     }
   });
 }
