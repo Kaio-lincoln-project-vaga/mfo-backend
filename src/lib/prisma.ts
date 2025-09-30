@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-// Configuração global do Prisma Client
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
@@ -10,7 +10,7 @@ export const prisma = globalForPrisma.prisma ?? new PrismaClient({
   errorFormat: 'pretty',
 });
 
-// Função para testar a conexão
+
 export async function testDatabaseConnection() {
   try {
     await prisma.$connect();
@@ -22,7 +22,7 @@ export async function testDatabaseConnection() {
   }
 }
 
-// Graceful shutdown
+
 export async function disconnectDatabase() {
   try {
     await prisma.$disconnect();

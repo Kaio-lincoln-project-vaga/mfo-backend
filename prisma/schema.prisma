@@ -13,7 +13,7 @@ model Simulation {
   startDate              DateTime
   realRate               Float
   version                Int                     @default(1)
-  parentSimulationId     String?                 // ID da simulação original (para versões)
+  parentSimulationId     String?                 
   isLegacy               Boolean                 @default(false)
   isSituacaoAtual        Boolean                 @default(false)
   createdAt              DateTime                @default(now())
